@@ -33,6 +33,14 @@ static ListResult init_node(List node,ListElement element,List first, List next,
     node->iterator = iterator;
     return LIST_SUCCESS;
 }
+static ListResult reset_node(List node) {
+    assert(node->copyFunction && node->freeFunction);
+    node->freeFunction(node->element);
+    node->first = NULL;
+    node->next_node = NULL;
+    node->iterator = 0;
+    return LIST_SUCCESS;
+}
 
 List listCreate(CopyListElement copyElement, FreeListElement freeElement) {
     IS_NULL(copyElement,NULL)
@@ -44,7 +52,6 @@ List listCreate(CopyListElement copyElement, FreeListElement freeElement) {
     new_list->first=new_list;
     new_list->element = NULL;
     new_list->next_node = NULL;
-    new_list->first = NULL;
     new_list->iterator = 0;
     new_list->copyFunction=copyElement;
     new_list->freeFunction=freeElement;
@@ -109,21 +116,29 @@ ListElement listGetCurrent(List list){
     IS_NULL(list,NULL)
     return list->element;
 }
+ int listGetIndex(List list){
+    IS_NULL(list,-1);
+    return list->iterator;
+}
 
 ListResult listInsertFirst(List list, ListElement element) {
     IS_NULL(list, LIST_NULL_ARGUMENT);
-    list = list->first;
+    if(list->first->element == NULL){
+        ListResult r=init_node(list,element,list,NULL,0);
+        return r;
+    }
+    List tmp = list->first;
     List new_node = listCreate(list->copyFunction, list->freeFunction);
     IS_NULL(new_node, LIST_OUT_OF_MEMORY);
     new_node->element = new_node->copyFunction(element);
     IS_NULL(new_node->element, LIST_OUT_OF_MEMORY);
-    new_node->next_node = list;
-    while (list) {
+    new_node->next_node = tmp;
+    while (tmp) {
         list->first = new_node;
-        (list->iterator)++;
-        list = list->next_node;
+        (tmp->iterator)++;
+        tmp = tmp->next_node;
     }
-    list = new_node;
+    tmp = new_node;
     return LIST_SUCCESS;
 }
 
@@ -146,6 +161,7 @@ ListResult listInsertLast(List list, ListElement element){
 ListResult listInsertBeforeCurrent(List list, ListElement element){
     IS_NULL(list, LIST_NULL_ARGUMENT);
     IS_NULL(list->element, LIST_INVALID_CURRENT);
+    /* Invalid state check??? */
     int current=list->iterator;
     if(current==0) {
         return listInsertFirst(list,element);
@@ -154,7 +170,7 @@ ListResult listInsertBeforeCurrent(List list, ListElement element){
     List new_node = listCreate(list->copyFunction, list->freeFunction);
     IS_NULL(new_node, LIST_OUT_OF_MEMORY);
     List tmp=list->first;
-    while(current > 0  && tmp->iterator == current-1){
+    while(current > 0  && tmp->iterator < current-1){
         tmp=tmp->next_node;
     }
     tmp->next_node=new_node;
@@ -170,12 +186,147 @@ ListResult listInsertBeforeCurrent(List list, ListElement element){
 ListResult listInsertAfterCurrent(List list, ListElement element){
     IS_NULL(list, LIST_NULL_ARGUMENT);
     IS_NULL(list->element, LIST_INVALID_CURRENT);
-    
+    /* Invalid state check??? */
+    int current=list->iterator;
+    if(current == listGetSize(list)-1) {
+        return listInsertLast(list,element);
+    }
+    List new_node = listCreate(list->copyFunction, list->freeFunction);
+    IS_NULL(new_node, LIST_OUT_OF_MEMORY);
+    init_node(new_node,element,list->first,list->next_node,current+1);
+    list->next_node=new_node;
+    List tmp=new_node->next_node;
+    while(tmp){
+        (tmp->iterator)++;
+        tmp=tmp->next_node;
+    }
+    return LIST_SUCCESS;
+}
+
+ListResult listRemoveCurrent(List list){
+    IS_NULL(list, LIST_NULL_ARGUMENT);
+    /* Invalid state check??? */
+    List tmp=list->first;
+    while (tmp->iterator < list->iterator - 1){
+        tmp=tmp->next_node;
+    }
+    if(list->iterator==0){
+        tmp=tmp->next_node;
+        list->first=tmp;
+    }
+    else if(list->next_node==NULL){
+        tmp->next_node=NULL;
+    }
+    else{
+        tmp->next_node=list->next_node->next_node;
+    }
+    reset_node(list);
+    free(list);
+    while(tmp->next_node){
+        tmp->next_node->iterator--;
+        tmp->next_node->first=tmp->first;
+    }
+    return LIST_SUCCESS;
+}
+
+static ListResult swap_elements(List list, ListElement element1,ListElement element2){
+    ListElement temp=list->copyFunction(element1);
+    IS_NULL(temp,LIST_OUT_OF_MEMORY);
+    list->freeFunction(element1);
+    element1=list->copyFunction(element2);
+    if(!element1){
+        list->freeFunction(temp);
+        return LIST_OUT_OF_MEMORY;
+    }
+    list->freeFunction(element2);
+    element2=list->copyFunction(temp);
+    if(!element2){
+        list->freeFunction(temp);
+        return LIST_OUT_OF_MEMORY;
+    }
+    list->freeFunction(temp);
+    return LIST_SUCCESS;
+}
 
 
+ListResult bubble_sort(int stop_at, List list,CompareListElements compareElement,bool* sorted) {
+    bool swapped=false;
+    List tmp=list;
+    while(tmp->next_node->iterator <= stop_at) {
+        if(compareElement(tmp->element,tmp->next_node->element) > 0) {
+            ListResult r=swap_elements(list,tmp->element,tmp->next_node->element);
+            if(r != LIST_SUCCESS){
+                return r;
+            }
+            swapped=true;
+        }
+        tmp=tmp->next_node;
+    }
+    *sorted=!swapped;
+    return LIST_SUCCESS;
+}
 
+ListResult listSort(List list, CompareListElements compareElement){
+    IS_NULL(list, LIST_NULL_ARGUMENT);
+    IS_NULL(compareElement, LIST_NULL_ARGUMENT);
+    int stop_index=listGetSize(list)-1;
+    bool sorted = false;
+    while(!sorted){
+        ListResult r=bubble_sort(stop_index,list->first,compareElement,&sorted);
+        if(r != LIST_SUCCESS){
+            return r;
+        }
+        stop_index--;
+    }
+    return LIST_SUCCESS;
+}
 
+List listFilter(List list, FilterListElement filterElement, ListFilterKey key){
+    IS_NULL(list,NULL);
+    IS_NULL(filterElement,NULL);
+    List filtered=listCreate(list->copyFunction,list->freeFunction);
+    IS_NULL(filtered,NULL);
+    List tmp=list->first;
+    int i=0;
+    while(tmp){
+        if(filterElement(tmp->element,key)){
+            filtered->element=tmp->copyFunction(tmp->element);
+            if(filtered->element == NULL) {
+                listDestroy(filtered);
+                return NULL;
+            }
+            if(filtered->first == NULL) {
+                filtered->first = filtered;
+            }
+            filtered->next_node=filtered;
+            filtered->iterator=i++;
+        }
+        tmp=tmp->next_node;
+    }
+    return filtered->first;
+}
 
+ListResult listClear(List list) {
+    IS_NULL(list, LIST_NULL_ARGUMENT);
+    List tmp = list->first;
+    while(tmp){
+        list->freeFunction(tmp->element);
+        tmp->element=NULL;
+        tmp=tmp->next_node;
+    }
+    return LIST_SUCCESS;
+}
 
-
+void listDestroy(List list){
+    List tmp=list->first;
+    listClear(list);
+    while(tmp){
+        tmp->first=NULL;
+        tmp->freeFunction=NULL;
+        tmp->copyFunction=NULL;
+        List next=tmp->next_node;
+        tmp->next_node=NULL;
+        tmp=next;
+    }
+    free(list);
 }

@@ -265,6 +265,8 @@ ListResult listInsertBeforeCurrent(List list, ListElement element);
 */
 ListResult listInsertAfterCurrent(List list, ListElement element);
 
+int listGetIndex(List list);
+
 /**
 * Removes the currently pointed element of the list using the stored freeing
 * function
